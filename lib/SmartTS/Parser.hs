@@ -30,6 +30,7 @@ reservedWords =
   , "int"
   , "bool"
   , "unit"
+  , "list"
   , "return"
   , "if"
   , "else"
@@ -54,7 +55,7 @@ reserved w = lexeme (try (string w <* notFollowedBy (alphaNumChar <|> char '_'))
 
 -- Types
 parseType :: Parser Type
-parseType = parseRecordType <|> parsePrimitiveType
+parseType = parseListType <|> parseRecordType <|> parsePrimitiveType
   where
     parsePrimitiveType :: Parser Type
     parsePrimitiveType =
@@ -73,6 +74,11 @@ parseType = parseRecordType <|> parsePrimitiveType
       _ <- symbol ":"
       typ <- parseType
       return (name, typ)
+
+parseListType :: Parser Type
+parseListType = do
+  _ <- reserved "list"
+  TList <$> between (symbol "<") (symbol ">") parseType
 
 -- Names
 parseName :: Parser Name

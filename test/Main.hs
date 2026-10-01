@@ -25,6 +25,7 @@ tests =
         , expressionTests
         , statementTests
         , errorTests
+        , listTests
         ]
     , typeCheckTests
     ]
@@ -501,4 +502,19 @@ errorTests = testGroup "Error Cases"
 
   , testCase "Invalid expression syntax" $
       parseFailure "contract Test { storage: { x: int }; @entrypoint test(): int { return +; } }"
+  ]
+
+listTests :: TestTree
+listTests = testGroup "List Parsing"
+  [ testCase "List type: list<int>" $
+      parseSuccess "contract T { storage: { xs: list<int> }; @originate init(): unit { return (); } }" $ \contract ->
+        case contract of
+          Contract _ [("xs", TList TInt)] _ -> return ()
+          _ -> assertFailure "Expected storage field xs of type TList TInt"
+
+  , testCase "List type: list<list<int>>" $
+      parseSuccess "contract T { storage: { xs: list<list<int>>}; @originate init(): unit {return (); } }" $ \contract ->
+        case contract of
+          Contract _ [("xs", TList( TList TInt))] _ -> return ()
+          _ -> assertFailure "Expected storage field xs of type TList (TList TInt)"
   ]
