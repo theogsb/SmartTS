@@ -128,6 +128,7 @@ parseAtom =
     <|> parseInt
     <|> parseVarOrCall
     <|> parens parseExpr
+    <|> parseListExpr
 
 parseStorageExpr :: Parser ParsedExpr
 parseStorageExpr = do
@@ -162,6 +163,17 @@ parseRecordField = do
   expr <- parseExpr
   return (name, expr)
 
+parseCompClauses :: Parser [CompClause ()]
+parseCompClauses = fail "list comprehension not implemented yet"
+
+parseListExpr :: Parser ParsedExpr
+parseListExpr = brackets $ do
+  mFirst <- optional parseExpr
+  case mFirst of
+    Nothing    -> return (ListLit () [])
+    Just first ->
+          (ListComp () first <$> parseCompClauses) <|> (ListLit () . (first :) <$> many (symbol "," *> parseExpr))
+
 parseUnit :: Parser ParsedExpr
 parseUnit = do
   _ <- symbol "()"
@@ -172,6 +184,9 @@ parens = between (symbol "(") (symbol ")")
 
 braces :: Parser a -> Parser a
 braces = between (symbol "{") (symbol "}")
+
+brackets :: Parser a -> Parser a 
+brackets = between (symbol "[") (symbol "]")
 
 -- Statements
 parseStmt :: Parser ParsedStmt

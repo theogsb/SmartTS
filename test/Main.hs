@@ -517,4 +517,22 @@ listTests = testGroup "List Parsing"
         case contract of
           Contract _ [("xs", TList( TList TInt))] _ -> return ()
           _ -> assertFailure "Expected storage field xs of type TList (TList TInt)"
+
+  , testCase "List literal: empty" $
+      parseSuccess "contract T { storage: { x: int }; @entrypoint t(): unit { return []; } }" $ \contract ->
+        case contract of
+          Contract _ _ [MethodDecl _ _ _ _ (SequenceStmt [ReturnStmt (ListLit _ [])])] -> return ()
+          _ -> assertFailure "Expected empty ListLit"
+  
+  , testCase "List literal: one element" $
+      parseSuccess "contract T { storage: { x: int }; @entrypoint t(): unit { return [1]; } }" $ \contract ->
+        case contract of
+          Contract _ _ [MethodDecl _ _ _ _ (SequenceStmt [ReturnStmt (ListLit _ [CInt _ 1])])] -> return ()
+          _ -> assertFailure "Expected ListLit with one element"
+
+  , testCase "List literal: three elements" $
+      parseSuccess "contract T { storage: { x: int }; @entrypoint t(): unit { return [1, 2, 3]; } }" $ \contract ->
+        case contract of
+          Contract _ _ [MethodDecl _ _ _ _ (SequenceStmt [ReturnStmt (ListLit _ [(CInt _ 1), (CInt _ 2), (CInt _ 3)])])] -> return ()
+          _ -> assertFailure "Expected ListLit with three elements"
   ]
