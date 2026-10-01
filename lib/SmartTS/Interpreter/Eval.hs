@@ -80,6 +80,8 @@ evalExpr (Call _ name args) = do
   case mRet of
     Nothing -> interpretBug ("method `" ++ name ++ "` did not return a value after type check")
     Just v  -> return v
+evalExpr (ListLit _ _) = interpretBug "list literal reached the interpreter"
+evalExpr (ListComp _ _ _) = interpretBug "list comprehension reached the interpreter"
 
 -- ---------------------------------------------------------------------------
 -- Statement execution
