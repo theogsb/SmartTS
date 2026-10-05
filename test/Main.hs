@@ -571,4 +571,16 @@ listTests = testGroup "List Parsing"
 
   , testCase "List comprehension: generator without `in` is rejected" $
       parseFailure "contract T { storage: { x: int }; @entrypoint t(): unit { return [x for x xs]; } }"
+
+  , testCase "Reserved words: `for` is not a valid variable name" $
+      parseFailure "contract T { storage: { x: int }; @entrypoint t(): unit { val for: int = 1; return (); } }"
+
+  , testCase "Reserved words: `in` is not a valid variable name" $
+      parseFailure "contract T { storage: { x: int }; @entrypoint t(): unit { val in: int = 1; return (); } }"
+
+  , testCase "Reserved words: names that only start with `for` or `in` stay valid" $
+      parseSuccess "contract T { storage: { x: int }; @entrypoint t(): unit { val index: int = 1; val format: int = 2; return (); } }" $ \contract ->
+        case contract of
+          Contract _ _ [MethodDecl _ _ _ _ (SequenceStmt [ValDeclStmt "index" _ _, ValDeclStmt "format" _ _, _])] -> return ()
+          _ -> assertFailure "Expected two val declarations named index and format"
   ]

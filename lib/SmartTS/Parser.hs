@@ -39,6 +39,8 @@ reservedWords =
   , "val"
   , "true"
   , "false"
+  , "for"
+  , "in"
   ]
 
 identifier :: Parser String
