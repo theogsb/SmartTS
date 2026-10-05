@@ -175,14 +175,65 @@ or method names. After reading a name, it checks against `reservedWords`:
 
 ```haskell
 reservedWords =
-  [ "contract", "storage", "int", "bool", "unit"
+  [ "contract", "storage", "int", "bool", "unit", "list"
   , "return", "if", "else", "while", "var", "val"
-  , "true", "false"
+  , "true", "false", "for", "in"
   ]
 ```
 
 If the parsed name is in this list, the parser fails with "reserved word: …".
-This prevents `var if: int = 0` from parsing as a valid declaration.
+This prevents `var if: int = 0` from parsing as a valid declaration. `for` and
+`in` are reserved because of list comprehensions, so `val in: int = 1;` is also
+rejected. Only whole words are compared: `index` and `format` remain valid names.
+
+---
+
+## List Literals and Comprehensions
+
+`parseAtom` ends with `parseListExpr`, the only alternative that starts with
+`[`. Literals and comprehensions begin the same way (`[` followed by one
+expression), so `parseListExpr` reads the first element and then decides:
+
+```haskell
+parseListExpr = brackets $ do
+  mFirst <- optional parseExpr
+  case mFirst of
+    Nothing    -> return (ListLit () [])
+    Just first ->
+      (ListComp () first <$> parseCompClauses)
+        <|> (ListLit () . (first :) <$> many (symbol "," *> parseExpr))
+```
+
+`<|>` only tries the literal when `parseCompClauses` failed **without consuming
+input**. That holds because every clause starts with `reserved "for"` or
+`reserved "if"`, and `reserved` wraps its match in `try`.
+
+The clauses that follow the element are read by `parseCompClauses`:
+
+```haskell
+parseCompClauses = (:) <$> parseGen <*> many (parseGen <|> parseGuard)
+  where
+    parseGen   = CompGen   <$> (reserved "for" *> parseName) <*> (reserved "in" *> parseExpr)
+    parseGuard = CompGuard <$> (reserved "if" *> parseExpr)
+```
+
+| Source | Result |
+|--------|--------|
+| `[x for x in xs]` | `ListComp () (Var () "x") [CompGen "x" (Var () "xs")]` |
+| `[x for x in xs if x > 0]` | one `CompGen` followed by `CompGuard (Gt () …)` |
+| `[x + y for x in xs for y in ys]` | two `CompGen`, in written order |
+| `[x if x > 0 for x in xs]` | parse error: the first clause must be a generator |
+
+The leading `(:) <$> parseGen` matters. `many` alone never fails, so the
+literal alternative in `parseListExpr` would never run and `[3]` would become a
+comprehension with no clauses. After the first generator, guards and generators
+may appear in any order.
+
+Neither `CompGen` nor `CompGuard` carries an annotation. Only the expressions
+inside them do, so patterns look like `CompGen "x" (Var _ "xs")`.
+
+The type checker and interpreter do not support lists yet; they report an error
+for `ListLit` and `ListComp`.
 
 ---
 

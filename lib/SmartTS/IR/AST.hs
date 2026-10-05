@@ -30,6 +30,7 @@ data Type = TInt
           | TBool
           | TUnit
           | TRecord [(Name, Type)]
+          | TList Type
   deriving (Eq, Show)
 
 type Name = String
@@ -57,6 +58,13 @@ data Expr a
   | Record  a [(Name, Expr a)]
   | Unit    a
   | Call    a Name [Expr a]
+  | ListLit a [Expr a]
+  | ListComp a (Expr a) [CompClause a]
+  deriving (Eq, Show)
+  
+data CompClause a 
+  = CompGen Name (Expr a) 
+  | CompGuard (Expr a)
   deriving (Eq, Show)
 
 -- | Extract the annotation from any expression node.
@@ -79,6 +87,8 @@ exprAnn (Neq a _ _)         = a
 exprAnn (Lt a _ _)          = a
 exprAnn (Lte a _ _)         = a
 exprAnn (Gt a _ _)          = a
+exprAnn (ListLit a _)       = a
+exprAnn (ListComp a _ _)    = a
 exprAnn (Gte a _ _)         = a
 exprAnn (Record a _)        = a
 exprAnn (Unit a)            = a

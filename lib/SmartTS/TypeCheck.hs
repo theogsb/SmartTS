@@ -4,6 +4,7 @@ module SmartTS.TypeCheck
   ( typeCheckContract
   ) where
 
+import Control.Monad(when, zipWithM_)
 import Control.Monad.State
 import Data.List (nub)
 import qualified Data.Map.Strict as M
@@ -254,6 +255,8 @@ inferExpr (Call () name args) = do
         targs
         expected
       return (Call (returnType sig) name targs)
+inferExpr (ListLit () _) = tcError "lists not supported by the type checker yet"
+inferExpr (ListComp () _ _ ) = tcError "lists not supported by the type checker yet" 
 
 inferBoolBin :: (Expr Type -> Expr Type -> Expr Type) -> Expr () -> Expr () -> TcM (Expr Type)
 inferBoolBin con a b = do
@@ -308,6 +311,7 @@ typesEqual TUnit TUnit = True
 typesEqual (TRecord as) (TRecord bs) = length as == length bs && and (zipWith fieldEq as bs)
   where
     fieldEq (n1, t1) (n2, t2) = n1 == n2 && typesEqual t1 t2
+typesEqual (TList a) (TList b) = typesEqual a b 
 typesEqual _ _ = False
 
 prettyType :: Type -> String
@@ -322,3 +326,5 @@ prettyType (TRecord fs) =
       , let lastI = length fs - 1
       ]
     ++ "}"
+
+prettyType (TList t) = "list<" ++ prettyType t ++ ">"

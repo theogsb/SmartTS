@@ -283,6 +283,24 @@ storage.pos.x         // nested field of storage
 The inferred type follows source order: `{ a: int, b: bool }` and
 `{ b: bool, a: int }` are **different** types.
 
+### List literals and comprehensions
+
+```typescript
+[]                          // empty list
+[1, 2, 3]                   // list literal
+[[1, 2], [3]]               // lists nest
+[x + 1 for x in xs]         // comprehension: one generator
+[x for x in xs if x > 0]    // a guard filters the items
+[x + y for x in xs for y in ys]   // several generators
+```
+
+A comprehension is `[element clause clause …]`. The first clause must be a
+generator (`for name in expression`); later clauses may be generators or
+guards (`if expression`) in any order. `for` and `in` are reserved words.
+
+Only parsing is supported for now; type checking and evaluation of lists come
+in a later milestone.
+
 ---
 
 ## Accessing and Mutating Storage
