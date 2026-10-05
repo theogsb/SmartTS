@@ -164,7 +164,10 @@ parseRecordField = do
   return (name, expr)
 
 parseCompClauses :: Parser [CompClause ()]
-parseCompClauses = fail "list comprehension not implemented yet"
+parseCompClauses = (:) <$> parseGen <*> many (parseGen <|> parseGuard)
+  where
+    parseGen = CompGen <$> (reserved "for" *> parseName) <*> (reserved "in" *> parseExpr)
+    parseGuard = CompGuard <$> (reserved "if" *> parseExpr)
 
 parseListExpr :: Parser ParsedExpr
 parseListExpr = brackets $ do
