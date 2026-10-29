@@ -7,6 +7,7 @@ import Test.Tasty.HUnit
 import SmartTS.IR.AST
 import SmartTS.Parser
 import Data.Aeson (object, (.=))
+import Data.List (isInfixOf)
 import SmartTS.Interpreter (ContractInstance (..), contractInstanceFromStorageValue)
 import SmartTS.TypeCheck (typeCheckContract)
 
@@ -56,6 +57,20 @@ typeCheckFailure input = case parseContractFromString input of
   Right c ->
     case typeCheckContract c of
       Left _  -> return ()
+      Right _ -> assertFailure "Expected type error but checking succeeded"
+
+-- Like 'typeCheckFailure', but the error message must also contain @expected@,
+-- so a test cannot pass because of an unrelated error.
+typeCheckFailureWith :: String -> String -> Assertion
+typeCheckFailureWith expected input = case parseContractFromString input of
+  Left err -> assertFailure $ "Parse failed (need valid parse for type test): " ++ show err
+  Right c ->
+    case typeCheckContract c of
+      Left err
+        | expected `isInfixOf` err -> return ()
+        | otherwise ->
+            assertFailure $
+              "Type error message does not contain " ++ show expected ++ ".\nActual message: " ++ err
       Right _ -> assertFailure "Expected type error but checking succeeded"
 
 contractTests :: TestTree
@@ -446,6 +461,9 @@ typeCheckTests =
           "contract C { storage: { x: int }; @originate init(): int { return 0; } }"
     , testCase "Return type mismatch" $
         typeCheckFailure
+          "contract C { storage: { x: int }; @originate init(): int { return true; } }"
+    , testCase "Return type mismatch names the expected and inferred types" $
+        typeCheckFailureWith "expected int, inferred bool"
           "contract C { storage: { x: int }; @originate init(): int { return true; } }"
     , testCase "Arithmetic requires int" $
         typeCheckFailure
