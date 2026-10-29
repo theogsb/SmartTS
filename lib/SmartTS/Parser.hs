@@ -31,6 +31,7 @@ reservedWords =
   , "int"
   , "bool"
   , "unit"
+  , "list"
   , "return"
   , "if"
   , "else"
@@ -39,6 +40,8 @@ reservedWords =
   , "val"
   , "true"
   , "false"
+  , "for"
+  , "in"
   , "variant"
   , "match"
   ]
@@ -57,7 +60,7 @@ reserved w = lexeme (try (string w <* notFollowedBy (alphaNumChar <|> char '_'))
 
 -- Types
 parseType :: Parser Type
-parseType = parseVariantType <|> parseRecordType <|> parsePrimitiveType
+parseType = parseVariantType <|> parseListType <|> parseRecordType <|> parsePrimitiveType
   where
     parseVariantType :: Parser Type
     parseVariantType = do
@@ -88,6 +91,11 @@ parseType = parseVariantType <|> parseRecordType <|> parsePrimitiveType
       _ <- symbol ":"
       typ <- parseType
       return (name, typ)
+
+parseListType :: Parser Type
+parseListType = do
+  _ <- reserved "list"
+  TList <$> between (symbol "<") (symbol ">") parseType
 
 -- Names
 parseName :: Parser Name
@@ -138,6 +146,7 @@ parseAtom =
     <|> parseInt
     <|> parseVarOrCall
     <|> parens parseExpr
+    <|> parseListExpr
 
 parseVariantCons :: Parser ParsedExpr
 parseVariantCons = do
@@ -179,6 +188,20 @@ parseRecordField = do
   expr <- parseExpr
   return (name, expr)
 
+parseCompClauses :: Parser [CompClause ()]
+parseCompClauses = (:) <$> parseGen <*> many (parseGen <|> parseGuard)
+  where
+    parseGen = CompGen <$> (reserved "for" *> parseName) <*> (reserved "in" *> parseExpr)
+    parseGuard = CompGuard <$> (reserved "if" *> parseExpr)
+
+parseListExpr :: Parser ParsedExpr
+parseListExpr = brackets $ do
+  mFirst <- optional parseExpr
+  case mFirst of
+    Nothing    -> return (ListLit () [])
+    Just first ->
+          (ListComp () first <$> parseCompClauses) <|> (ListLit () . (first :) <$> many (symbol "," *> parseExpr))
+
 parseUnit :: Parser ParsedExpr
 parseUnit = do
   _ <- symbol "()"
@@ -189,6 +212,9 @@ parens = between (symbol "(") (symbol ")")
 
 braces :: Parser a -> Parser a
 braces = between (symbol "{") (symbol "}")
+
+brackets :: Parser a -> Parser a 
+brackets = between (symbol "[") (symbol "]")
 
 -- Statements
 parseStmt :: Parser ParsedStmt

@@ -25,6 +25,7 @@ tests =
         , expressionTests
         , statementTests
         , errorTests
+        , listTests
         ]
     , typeCheckTests
     ]
@@ -501,4 +502,85 @@ errorTests = testGroup "Error Cases"
 
   , testCase "Invalid expression syntax" $
       parseFailure "contract Test { storage: { x: int }; @entrypoint test(): int { return +; } }"
+  ]
+
+listTests :: TestTree
+listTests = testGroup "List Parsing"
+  [ testCase "List type: list<int>" $
+      parseSuccess "contract T { storage: { xs: list<int> }; @originate init(): unit { return (); } }" $ \contract ->
+        case contract of
+          Contract _ [("xs", TList TInt)] _ -> return ()
+          _ -> assertFailure "Expected storage field xs of type TList TInt"
+
+  , testCase "List type: list<list<int>>" $
+      parseSuccess "contract T { storage: { xs: list<list<int>>}; @originate init(): unit {return (); } }" $ \contract ->
+        case contract of
+          Contract _ [("xs", TList( TList TInt))] _ -> return ()
+          _ -> assertFailure "Expected storage field xs of type TList (TList TInt)"
+
+  , testCase "List literal: empty" $
+      parseSuccess "contract T { storage: { x: int }; @entrypoint t(): unit { return []; } }" $ \contract ->
+        case contract of
+          Contract _ _ [MethodDecl _ _ _ _ (SequenceStmt [ReturnStmt (ListLit _ [])])] -> return ()
+          _ -> assertFailure "Expected empty ListLit"
+  
+  , testCase "List literal: one element" $
+      parseSuccess "contract T { storage: { x: int }; @entrypoint t(): unit { return [1]; } }" $ \contract ->
+        case contract of
+          Contract _ _ [MethodDecl _ _ _ _ (SequenceStmt [ReturnStmt (ListLit _ [CInt _ 1])])] -> return ()
+          _ -> assertFailure "Expected ListLit with one element"
+
+  , testCase "List literal: three elements" $
+      parseSuccess "contract T { storage: { x: int }; @entrypoint t(): unit { return [1, 2, 3]; } }" $ \contract ->
+        case contract of
+          Contract _ _ [MethodDecl _ _ _ _ (SequenceStmt [ReturnStmt (ListLit _ [(CInt _ 1), (CInt _ 2), (CInt _ 3)])])] -> return ()
+          _ -> assertFailure "Expected ListLit with three elements"
+
+  , testCase "List comprehension: single generator" $
+      parseSuccess "contract T { storage: { x: int }; @entrypoint t(): unit { return [x for x in xs]; } }" $ \contract ->
+        case contract of
+          Contract _ _ [MethodDecl _ _ _ _ (SequenceStmt [ReturnStmt (ListComp _ (Var _ "x") [CompGen "x" (Var _ "xs")])])] -> return ()
+          _ -> assertFailure "Expected ListComp with one generator"
+
+  , testCase "List comprehension: two generators" $
+      parseSuccess "contract T { storage: { x: int }; @entrypoint t(): unit { return [x + y for x in xs for y in ys]; } }" $ \contract ->
+        case contract of
+          Contract _ _ [MethodDecl _ _ _ _ (SequenceStmt [ReturnStmt (ListComp _ (Add _ (Var _ "x") (Var _ "y")) [CompGen "x" (Var _ "xs"), CompGen "y" (Var _ "ys")])])] -> return ()
+          _ -> assertFailure "Expected ListComp with two generators"
+
+  , testCase "List comprehension: generator and guard" $
+      parseSuccess "contract T { storage: { x: int }; @entrypoint t(): unit { return [x for x in xs if x > 0]; } }" $ \contract ->
+        case contract of
+          Contract _ _ [MethodDecl _ _ _ _ (SequenceStmt [ReturnStmt (ListComp _ (Var _ "x") [CompGen "x" (Var _ "xs"), CompGuard (Gt _ (Var _ "x") (CInt _ 0))])])] -> return ()
+          _ -> assertFailure "Expected ListComp with a generator and a guard"
+
+  , testCase "List comprehension: generator, guard, generator" $
+      parseSuccess "contract T { storage: { x: int }; @entrypoint t(): unit { return [x for x in xs if x > 0 for y in ys]; } }" $ \contract ->
+        case contract of
+          Contract _ _ [MethodDecl _ _ _ _ (SequenceStmt [ReturnStmt (ListComp _ (Var _ "x") [CompGen "x" (Var _ "xs"), CompGuard (Gt _ (Var _ "x") (CInt _ 0)), CompGen "y" (Var _ "ys")])])] -> return ()
+          _ -> assertFailure "Expected clauses in written order: generator, guard, generator"
+
+  , testCase "List literal: nested lists" $
+      parseSuccess "contract T { storage: { x: int }; @entrypoint t(): unit { return [[1, 2], [3]]; } }" $ \contract ->
+        case contract of
+          Contract _ _ [MethodDecl _ _ _ _ (SequenceStmt [ReturnStmt (ListLit _ [ListLit _ [CInt _ 1, CInt _ 2], ListLit _ [CInt _ 3]])])] -> return ()
+          _ -> assertFailure "Expected ListLit of two ListLits"
+
+  , testCase "List comprehension: guard before generator is rejected" $
+      parseFailure "contract T { storage: { x: int }; @entrypoint t(): unit { return [x if x > 0 for x in xs]; } }"
+
+  , testCase "List comprehension: generator without `in` is rejected" $
+      parseFailure "contract T { storage: { x: int }; @entrypoint t(): unit { return [x for x xs]; } }"
+
+  , testCase "Reserved words: `for` is not a valid variable name" $
+      parseFailure "contract T { storage: { x: int }; @entrypoint t(): unit { val for: int = 1; return (); } }"
+
+  , testCase "Reserved words: `in` is not a valid variable name" $
+      parseFailure "contract T { storage: { x: int }; @entrypoint t(): unit { val in: int = 1; return (); } }"
+
+  , testCase "Reserved words: names that only start with `for` or `in` stay valid" $
+      parseSuccess "contract T { storage: { x: int }; @entrypoint t(): unit { val index: int = 1; val format: int = 2; return (); } }" $ \contract ->
+        case contract of
+          Contract _ _ [MethodDecl _ _ _ _ (SequenceStmt [ValDeclStmt "index" _ _, ValDeclStmt "format" _ _, _])] -> return ()
+          _ -> assertFailure "Expected two val declarations named index and format"
   ]
