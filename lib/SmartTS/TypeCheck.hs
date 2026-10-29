@@ -6,7 +6,7 @@ module SmartTS.TypeCheck
 
 import Control.Monad(when, zipWithM_)
 import Control.Monad.State
-import Data.List (nub)
+import Data.List (intercalate, nub)
 import qualified Data.Map.Strict as M
 import SmartTS.IR.AST
 
@@ -49,7 +49,9 @@ withSavedEnv action = do
 typeCheckContract :: ParsedContract -> Either String TypedContract
 typeCheckContract c = do
   checkDuplicateStorage (contractStorage c)
+  mapM_ (\(n, t) -> expectWellFormed ("Storage field `" ++ n ++ "`") t) (contractStorage c)
   mapM_ (checkDuplicateParams . methodArgs) (contractMethods c)
+  mapM_ checkSignatureWellFormed (contractMethods c)
   typedMethods <- mapM (checkMethod c) (contractMethods c)
   return $ Contract
     { contractName    = contractName c
@@ -70,6 +72,14 @@ checkDuplicateParams params =
    in if length names == length (nub names)
         then Right ()
         else Left "Duplicate parameter name in method."
+
+-- | Parameter and return types of a method must be well formed.
+checkSignatureWellFormed :: MethodDecl a -> Either String ()
+checkSignatureWellFormed m = do
+  mapM_
+    (\(FormalParameter n t) -> expectWellFormed ("Parameter `" ++ n ++ "`") t)
+    (methodArgs m)
+  expectWellFormed ("Return type of method `" ++ methodName m ++ "`") (methodReturnType m)
 
 buildSigMap :: Contract a -> M.Map Name Signature
 buildSigMap c =
@@ -117,12 +127,14 @@ checkStmt (ReturnStmt e) = do
   return (ReturnStmt te)
 checkStmt (VarDeclStmt n typ e) = do
   noDuplicateLocal n
+  lift $ expectWellFormed ("Local `" ++ n ++ "`") typ
   te <- inferExpr e
   lift $ expectType ("initializer of var `" ++ n ++ "`") (exprAnn te) typ
   modify $ insertLocal n LocalMutable typ
   return (VarDeclStmt n typ te)
 checkStmt (ValDeclStmt n typ e) = do
   noDuplicateLocal n
+  lift $ expectWellFormed ("Local `" ++ n ++ "`") typ
   te <- inferExpr e
   lift $ expectType ("initializer of val `" ++ n ++ "`") (exprAnn te) typ
   modify $ insertLocal n LocalImmutable typ
@@ -308,11 +320,17 @@ typesEqual :: Type -> Type -> Bool
 typesEqual TInt  TInt  = True
 typesEqual TBool TBool = True
 typesEqual TUnit TUnit = True
-typesEqual (TRecord as) (TRecord bs) = length as == length bs && and (zipWith fieldEq as bs)
-  where
-    fieldEq (n1, t1) (n2, t2) = n1 == n2 && typesEqual t1 t2
-typesEqual (TList a) (TList b) = typesEqual a b 
+typesEqual (TRecord as) (TRecord bs) = namedTypesEqual as bs
+typesEqual (TVariant as) (TVariant bs) = namedTypesEqual as bs
+typesEqual (TList a) (TList b) = typesEqual a b
 typesEqual _ _ = False
+
+-- | Records and variants are compared position by position: names and types
+-- must match, so the order of fields (or tags) is part of the type.
+namedTypesEqual :: [(Name, Type)] -> [(Name, Type)] -> Bool
+namedTypesEqual as bs = length as == length bs && and (zipWith entryEq as bs)
+  where
+    entryEq (n1, t1) (n2, t2) = n1 == n2 && typesEqual t1 t2
 
 prettyType :: Type -> String
 prettyType TInt  = "int"
@@ -326,5 +344,35 @@ prettyType (TRecord fs) =
       , let lastI = length fs - 1
       ]
     ++ "}"
-
 prettyType (TList t) = "list<" ++ prettyType t ++ ">"
+prettyType (TVariant alts) =
+  "variant { " ++ intercalate " | " (map alt alts) ++ " }"
+  where
+    -- An alternative without payload has payload type unit and is written as a bare tag.
+    alt (tag, TUnit) = tag
+    alt (tag, t) = tag ++ "(" ++ prettyType t ++ ")"
+
+-- | A type is well formed when, at any depth, no record repeats a field name
+-- and no variant repeats a tag. The error mentions only the offending type.
+checkTypeWF :: Type -> Either String ()
+checkTypeWF TInt = Right ()
+checkTypeWF TBool = Right ()
+checkTypeWF TUnit = Right ()
+checkTypeWF t@(TRecord fields) = checkNamedEntries "field" t fields
+checkTypeWF t@(TVariant alts) = checkNamedEntries "tag" t alts
+checkTypeWF (TList el) = checkTypeWF el
+
+checkNamedEntries :: String -> Type -> [(Name, Type)] -> Either String ()
+checkNamedEntries what t entries =
+  case duplicates (map fst entries) of
+    d : _ -> Left $ "duplicate " ++ what ++ " `" ++ d ++ "` in " ++ prettyType t
+    [] -> mapM_ (checkTypeWF . snd) entries
+
+-- | Names that appear more than once, in order of their second appearance.
+duplicates :: [Name] -> [Name]
+duplicates ns = nub [n | (i, n) <- zip [0 :: Int ..] ns, n `elem` take i ns]
+
+-- | 'checkTypeWF' with a description of where the type was written.
+expectWellFormed :: String -> Type -> Either String ()
+expectWellFormed ctx t =
+  either (\err -> Left (ctx ++ " has an ill-formed type: " ++ err ++ ".")) Right (checkTypeWF t)

@@ -29,6 +29,7 @@ tests =
         , listTests
         ]
     , typeCheckTests
+    , variantTypeTests
     ]
 
 -- Helper function to parse and assert success
@@ -601,4 +602,60 @@ listTests = testGroup "List Parsing"
         case contract of
           Contract _ _ [MethodDecl _ _ _ _ (SequenceStmt [ValDeclStmt "index" _ _, ValDeclStmt "format" _ _, _])] -> return ()
           _ -> assertFailure "Expected two val declarations named index and format"
+  ]
+
+-- Wraps one entrypoint into a contract, so type-check tests only show what matters.
+withMethod :: String -> String -> String -> String
+withMethod params ret body =
+  "contract C { storage: { x: int }; @entrypoint f(" ++ params ++ "): " ++ ret ++ " { " ++ body ++ " } }"
+
+variantTypeTests :: TestTree
+variantTypeTests = testGroup "Type checker: variant types"
+  [ testGroup "Equality"
+      [ testCase "Same variant type is accepted" $
+          typeCheckSuccess $
+            withMethod "x: variant { A | B }" "unit" "val y: variant { A | B } = x; return ();"
+      , testCase "Variant nested in record and list is accepted" $
+          typeCheckSuccess $
+            withMethod "x: { s: list<variant { A(int) | B }> }" "unit"
+              "val y: { s: list<variant { A(int) | B }> } = x; return ();"
+      , testCase "Tag order is part of the type" $
+          typeCheckFailureWith "expected variant { B | A }, inferred variant { A | B }" $
+            withMethod "x: variant { A | B }" "unit" "val y: variant { B | A } = x; return ();"
+      , testCase "Payload type is part of the type" $
+          typeCheckFailureWith "expected variant { A(bool) | B }, inferred variant { A(int) | B }" $
+            withMethod "x: variant { A(int) | B }" "unit" "val y: variant { A(bool) | B } = x; return ();"
+      ]
+  , testGroup "Well-formedness"
+      [ testCase "Duplicate tag in a storage field" $
+          typeCheckFailureWith "Storage field `s` has an ill-formed type: duplicate tag `A` in variant { A | A }" $
+            "contract C { storage: { s: variant { A | A } }; @entrypoint f(): unit { return (); } }"
+      , testCase "Duplicate tag in a parameter" $
+          typeCheckFailureWith "Parameter `p` has an ill-formed type: duplicate tag `A`" $
+            withMethod "p: variant { A | A }" "unit" "return ();"
+      , testCase "Duplicate tag in a return type" $
+          typeCheckFailureWith "Return type of method `f` has an ill-formed type: duplicate tag `A`" $
+            withMethod "" "variant { A | A }" "return ();"
+      , testCase "Duplicate tag in a val type" $
+          typeCheckFailureWith "Local `y` has an ill-formed type: duplicate tag `A`" $
+            withMethod "x: variant { A | B }" "unit" "val y: variant { A | A } = x; return ();"
+      , testCase "Duplicate tag in a var type" $
+          typeCheckFailureWith "Local `y` has an ill-formed type: duplicate tag `A`" $
+            withMethod "x: variant { A | B }" "unit" "var y: variant { A | A } = x; return ();"
+      , testCase "Duplicate field in a record type" $
+          typeCheckFailureWith "duplicate field `a` in {a: int, a: bool}" $
+            withMethod "" "unit" "val r: { a: int, a: bool } = { a: 1, a: true }; return ();"
+      , testCase "Duplicate field nested in a variant payload" $
+          typeCheckFailureWith "duplicate field `a` in {a: int, a: bool}" $
+            withMethod "x: variant { A({ a: int, a: bool }) | B }" "unit" "return ();"
+      , testCase "Duplicate tag nested in a list" $
+          typeCheckFailureWith "duplicate tag `A` in variant { A | A }" $
+            withMethod "x: list<variant { A | A }>" "unit" "return ();"
+      , testCase "Same tag at different nesting levels is allowed" $
+          typeCheckSuccess $
+            withMethod "x: variant { A(variant { A | B }) | B }" "unit" "return ();"
+      , testCase "Same field name at different nesting levels is allowed" $
+          typeCheckSuccess $
+            withMethod "x: { a: { a: int } }" "unit" "return ();"
+      ]
   ]
