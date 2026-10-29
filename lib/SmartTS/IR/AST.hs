@@ -31,6 +31,7 @@ data Type = TInt
           | TUnit
           | TRecord [(Name, Type)]
           | TList Type
+          | TVariant [(Name, Type)]
   deriving (Eq, Show)
 
 type Name = String
@@ -60,10 +61,11 @@ data Expr a
   | Call    a Name [Expr a]
   | ListLit a [Expr a]
   | ListComp a (Expr a) [CompClause a]
+  | VariantCons a Name (Expr a)
   deriving (Eq, Show)
-  
-data CompClause a 
-  = CompGen Name (Expr a) 
+
+data CompClause a
+  = CompGen Name (Expr a)
   | CompGuard (Expr a)
   deriving (Eq, Show)
 
@@ -93,6 +95,7 @@ exprAnn (Gte a _ _)         = a
 exprAnn (Record a _)        = a
 exprAnn (Unit a)            = a
 exprAnn (Call a _ _)        = a
+exprAnn (VariantCons a _ _) = a
 
 type MethodBody a = Stmt a
 
@@ -112,6 +115,14 @@ data Stmt a
   | WhileStmt (Expr a) (Stmt a)                 -- (condition, body)
   | ReturnStmt (Expr a)
   | SequenceStmt [Stmt a]
+  | MatchStmt (Expr a) [MatchCase a] 
+  deriving (Eq, Show)
+
+data MatchCase a = MatchCase Pattern (Stmt a)     
+  deriving (Eq, Show)
+data Pattern
+  = PTag Name (Maybe Name)    
+  | PWildcard                 
   deriving (Eq, Show)
 
 -- | Type aliases for the two phases of the compilation pipeline.

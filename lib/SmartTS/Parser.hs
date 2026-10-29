@@ -5,6 +5,7 @@ import Text.Megaparsec
 import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
 import Control.Monad.Combinators.Expr
+import Data.Maybe (fromMaybe)
 import Data.Void
 
 type Parser = Parsec Void String
@@ -41,6 +42,8 @@ reservedWords =
   , "false"
   , "for"
   , "in"
+  , "variant"
+  , "match"
   ]
 
 identifier :: Parser String
@@ -57,8 +60,20 @@ reserved w = lexeme (try (string w <* notFollowedBy (alphaNumChar <|> char '_'))
 
 -- Types
 parseType :: Parser Type
-parseType = parseListType <|> parseRecordType <|> parsePrimitiveType
+parseType = parseVariantType <|> parseListType <|> parseRecordType <|> parsePrimitiveType
   where
+    parseVariantType :: Parser Type
+    parseVariantType = do
+      _ <- reserved "variant"
+      alts <- braces (sepBy1 parseVariantAlt (symbol "|"))
+      return $ TVariant alts
+
+    parseVariantAlt :: Parser (Name, Type)
+    parseVariantAlt = do
+      tag <- parseName
+      payload <- optional (parens parseType)
+      return (tag, fromMaybe TUnit payload)
+
     parsePrimitiveType :: Parser Type
     parsePrimitiveType =
       (reserved "int" >> return TInt)
@@ -126,11 +141,19 @@ parseAtom :: Parser ParsedExpr
 parseAtom =
   parseUnit
     <|> parseRecordExpr
+    <|> parseVariantCons
     <|> parseBool
     <|> parseInt
     <|> parseVarOrCall
     <|> parens parseExpr
     <|> parseListExpr
+
+parseVariantCons :: Parser ParsedExpr
+parseVariantCons = do
+  _ <- symbol "#"
+  tag <- parseName
+  payload <- optional (parseUnit <|> parens parseExpr)
+  return $ VariantCons () tag (fromMaybe (Unit ()) payload)
 
 parseStorageExpr :: Parser ParsedExpr
 parseStorageExpr = do
@@ -198,11 +221,32 @@ parseStmt :: Parser ParsedStmt
 parseStmt =
   parseIfStmt
     <|> parseWhileStmt
+    <|> parseMatchStmt
     <|> parseVarDeclStmt
     <|> parseValDeclStmt
     <|> parseReturn
     <|> parseAssignment
     <|> parseBlock
+
+parseMatchStmt :: Parser ParsedStmt
+parseMatchStmt = do
+  _ <- reserved "match"
+  scrutinee <- parens parseExpr
+  cases <- braces (many parseMatchCase)
+  return $ MatchStmt scrutinee cases
+
+parseMatchCase :: Parser (MatchCase ())
+parseMatchCase = do
+  pat <- parsePattern
+  _ <- symbol "=>"
+  body <- parseStmt
+  return $ MatchCase pat body
+
+parsePattern :: Parser Pattern
+parsePattern = wildcard <|> tagged
+  where
+    wildcard = PWildcard <$ lexeme (try (char '_' <* notFollowedBy (alphaNumChar <|> char '_')))
+    tagged = PTag <$> parseName <*> optional (parens parseName)
 
 parseVarDeclStmt :: Parser ParsedStmt
 parseVarDeclStmt = do
