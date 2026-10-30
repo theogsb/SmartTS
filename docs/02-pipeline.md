@@ -57,7 +57,8 @@ handled in the next stage.
 **Input:** The `Contract` AST produced by the parser.
 
 **Output:** Either a `Left String` type error (the first problem found), or
-`Right ()` — confirmation that the contract is well-typed.
+`Right` with the same contract annotated with the type of every expression
+(a `TypedContract`), which is what the interpreter then runs.
 
 **What it does:** The type checker walks every method in the contract and
 verifies that expressions and statements are consistent with the declared

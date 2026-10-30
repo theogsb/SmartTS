@@ -15,18 +15,26 @@ SmartTS has a single test executable (`test/Main.hs`) built with
 cabal test
 ```
 
-The suite is grouped into two top-level test groups:
+The suite is grouped into these top-level test groups:
 
 | Group | What it tests |
 |-------|---------------|
 | `Parser Tests` | Parsing of contracts, storage, methods, expressions, statements, and error cases |
 | `Type checker` | Type-checking acceptance and rejection of valid and invalid contracts |
+| `Type checker: variant types` | Equality of variant types and well-formedness of declared types |
+| `Type checker: expected-type messages` | The wording of type errors where an expression meets an expected type |
+| `Type checker: variant construction` | `#tag(e)` against an expected type, including inside records |
+| `Type checker: match` | Exhaustiveness, scope of bound names, and the errors in cases |
+| `Type checker: list literals` | List literals and the empty list, in both inference and checking |
+| `Type checker: list comprehensions` | Generators, guards, and the scope of the names they bind |
+| `Type checker: equality` | `==` and `!=` with constructors on either side, and comparable types |
+| `Type checker: typed tree and scope` | The annotated tree the checker returns, and the scope that is restored after `match` and `for` |
 
 ---
 
 ## Test Helpers
 
-Three helpers reduce boilerplate in every test:
+A few helpers reduce boilerplate in every test:
 
 ```haskell
 -- Parse a string; apply a function to the resulting Contract.
@@ -40,11 +48,17 @@ typeCheckSuccess :: String -> Assertion
 
 -- Parse and type-check a string; assert that type checking fails.
 typeCheckFailure :: String -> Assertion
+
+-- Like typeCheckFailure, but the error message must also contain the given text.
+typeCheckFailureWith :: String -> String -> Assertion
 ```
 
 Use `parseSuccess` when you need to inspect the resulting AST. Use
 `typeCheckSuccess` / `typeCheckFailure` when you only care about whether the
 contract is well-typed.
+Use `typeCheckFailureWith` when the message matters, so that a test cannot pass because of an unrelated error.
+The type checker tests also use a small `withMethod params returnType body` helper, which wraps one entrypoint into a contract so that a test shows only what it is about.
+`typeCheckedBody` type-checks a contract and hands the typed body of its first method to an assertion, for tests that look at the annotations instead of only at acceptance.
 
 ---
 
