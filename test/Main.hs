@@ -7,7 +7,7 @@ import Test.Tasty.HUnit
 import SmartTS.IR.AST
 import SmartTS.Parser
 import Control.Monad (foldM)
-import Data.Aeson (Value (..), object, (.=))
+import Data.Aeson (Value (..), object, toJSON, (.=))
 import Data.Either (isLeft)
 import Data.List (isInfixOf)
 import qualified Data.Map.Strict as M
@@ -1518,6 +1518,40 @@ listInterpreterTests = testGroup "Interpreter: lists"
               [CompGen "x" (ints [1, 2]), CompGen "y" (ints [10])])
           M.lookup "x" (rtLocals rt1) @?= Just (Binding True (int 5))
           M.member "y" (rtLocals rt1) @?= False
+      ]
+  
+  , testGroup "JSON"
+      [ testCase "a list is written as a JSON array" $
+          exprToJson (ints [1, 2, 3]) @?= toJSON [1, 2, 3 :: Int]
+
+      , testCase "a list of ints survives the round trip" $
+          jsonToExprByType tInts (exprToJson (ints [11, 21, 12, 22])) @?= Right (ints [11, 21, 12, 22])
+
+      , testCase "an empty array is read back with the declared type" $
+          jsonToExprByType (TList TBool) (toJSON ([] :: [Bool])) @?= Right (ListLit (TList TBool) [])
+
+      , testCase "nested lists survive the round trip" $ do
+          let v = ListLit (TList tInts) [ints [1], ints [], ints [2, 3]]
+          jsonToExprByType (TList tInts) (exprToJson v) @?= Right v
+
+      , testCase "a list of variants survives the round trip" $ do
+          let tv = TVariant [("Ok", TInt), ("Err", TUnit)]
+              v  = ListLit (TList tv) [VariantCons tv "Ok" (int 1), VariantCons tv "Err" (Unit TUnit)]
+          exprToJson v @?= toJSON [object ["Ok" .= (1 :: Int)], object ["Err" .= Null]]
+          jsonToExprByType (TList tv) (exprToJson v) @?= Right v
+
+      , testCase "a storage record with a list field survives the round trip" $ do
+          let ty = TRecord [("xs", tInts), ("n", TInt)]
+              v  = Record ty [("xs", ints [4, 5]), ("n", int 2)]
+          jsonToExprByType ty (exprToJson v) @?= Right v
+
+      , testCase "an element of the wrong type is rejected" $
+          assertBool "expected a decoding error" $
+            isLeft (jsonToExprByType tInts (toJSON [toJSON (1 :: Int), toJSON True]))
+
+      , testCase "a non-array is rejected for a list type" $
+          assertBool "expected a decoding error" $
+            isLeft (jsonToExprByType tInts (toJSON (1 :: Int)))
       ]
   ]
 

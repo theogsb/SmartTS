@@ -1,6 +1,7 @@
 module SmartTS.Interpreter.Codec where
 
-import Data.Aeson (Value (..))
+import Data.Aeson (Value (..), toJSON)
+import Data.Foldable (toList)
 import qualified Data.Aeson.Key as K
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Map.Strict as M
@@ -20,6 +21,10 @@ exprToJson (Record _ fields) =
 exprToJson (Unit _) = Null
 -- Variants
 exprToJson (VariantCons _ tag payload) = Object (KM.singleton (fromStringKey tag) (exprToJson payload))
+
+-- Lists
+exprToJson (ListLit _ items) = toJSON (map exprToJson items)
+
 exprToJson _ = Null
 
 jsonToExprByType :: Type -> Value -> Either String TypedExpr
@@ -45,6 +50,11 @@ jsonToExprByType t@(TVariant alts) (Object obj) =
     [(k, v)] | Just payloadT <- lookup (toStringKey k) alts ->
       VariantCons t (toStringKey k) <$> jsonToExprByType payloadT v
     _ -> Left "Expected a JSON object with exactly one tag of the variant."
+
+-- Lists: a JSON array, each element decoded against the element type.
+jsonToExprByType t@(TList elemT) (Array arr) =
+  ListLit t <$> mapM (jsonToExprByType elemT) (toList arr)
+
 jsonToExprByType _ _ = Left "JSON value does not match the expected SmartTS type."
 
 jsonToExprUntyped :: Value -> Either String ParsedExpr
