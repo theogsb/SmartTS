@@ -80,8 +80,25 @@ evalExpr (Call _ name args) = do
   case mRet of
     Nothing -> interpretBug ("method `" ++ name ++ "` did not return a value after type check")
     Just v  -> return v
-evalExpr (ListLit _ _) = interpretBug "list literal reached the interpreter"
-evalExpr (ListComp _ _ _) = interpretBug "list comprehension reached the interpreter"
+    
+-- Lists
+evalExpr (ListLit ty es) = ListLit ty <$> mapM evalExpr es
+
+evalExpr (ListComp ty body clauses) = ListLit ty <$> go clauses
+  where
+    go [] = (: []) <$> evalExpr body
+    go (CompGen x src : rest) = do
+      xs <- evalExpr src
+      case xs of
+        ListLit _ items -> concat <$> mapM (\item -> withLocal x item (go rest)) items
+        _ -> interpretBug "comprehension generator was not a list after type check"
+    go (CompGuard g : rest) = do
+      c <- evalExpr g
+      case c of
+        CBool _ True  -> go rest
+        CBool _ False -> return []
+        _ -> interpretBug "comprehension guard was not bool after type check"
+
 -- Variants
 evalExpr (VariantCons ty tag e) = VariantCons ty tag <$> evalExpr e
 

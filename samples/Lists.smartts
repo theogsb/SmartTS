@@ -1,0 +1,35 @@
+contract Lists {
+  storage: {
+    xs: list<int>,
+    grid: list<list<int>>
+  };
+
+  @originate
+  init(start: list<int>): unit {
+    storage.xs = start;
+    storage.grid = [];
+    return ();
+  }
+
+  @entrypoint
+  doubled(): list<int> {
+    return [x * 2 for x in storage.xs];
+  }
+
+  @entrypoint
+  keepAbove(min: int): unit {
+    storage.xs = [x for x in storage.xs if x > min];
+    return ();
+  }
+
+  @entrypoint
+  sums(ys: list<int>): list<int> {
+    return [x + y for x in storage.xs for y in ys];
+  }
+
+  @entrypoint
+  buildGrid(): unit {
+    storage.grid = [[y for y in storage.xs if y <= x] for x in storage.xs];
+    return ();
+  }
+}

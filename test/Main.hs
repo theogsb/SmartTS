@@ -7,7 +7,7 @@ import Test.Tasty.HUnit
 import SmartTS.IR.AST
 import SmartTS.Parser
 import Control.Monad (foldM)
-import Data.Aeson (Value (..), object, (.=))
+import Data.Aeson (Value (..), object, toJSON, (.=))
 import Data.Either (isLeft)
 import Data.List (isInfixOf)
 import qualified Data.Map.Strict as M
@@ -20,6 +20,8 @@ import SmartTS.Interpreter
   , originateWithJsonArgs
   )
 import SmartTS.TypeCheck (typeCheckContract)
+import Control.Monad.State (runStateT, modify)
+import SmartTS.Interpreter (Runtime (..), Binding (..), EvalM, evalExpr, withLocal)
 
 main :: IO ()
 main = defaultMain tests
@@ -49,6 +51,7 @@ tests =
     , comprehensionTests
     , typedAstTests
     , interpreterTests
+    , listInterpreterTests
     ]
 
 -- Helper function to parse and assert success
@@ -1386,3 +1389,207 @@ variantTypeTests = testGroup "Type checker: variant types"
             withMethod "x: { a: { a: int } }" "unit" "return ();"
       ]
   ]
+
+runtimeWithLocals :: [(Name, Binding)] -> Runtime
+runtimeWithLocals ls = Runtime
+  { rtStorage = Nothing
+  , rtParams  = M.empty
+  , rtLocals  = M.fromList ls
+  , rtMethods = M.empty
+  }
+
+runEval :: Runtime -> EvalM a -> IO (a, Runtime)
+runEval rt action = case runStateT action rt of
+  Left err -> assertFailure ("evaluation failed: " ++ err) >> error "unreachable"
+  Right r  -> return r
+
+listInterpreterTests :: TestTree
+listInterpreterTests = testGroup "Interpreter: lists"
+  [ testGroup "withLocal"
+    [ testCase "binds the name inside the block" $ do
+        (v, _) <- runEval (runtimeWithLocals []) $
+          withLocal "x" (CInt TInt 1) (evalExpr (Var TInt "x"))
+        v @?= CInt TInt 1
+
+    , testCase "restores the previous value after the block (shadowing)" $ do
+        let rt0 = runtimeWithLocals [("x", Binding True (CInt TInt 5))]
+        (inside, rt1) <- runEval rt0 $
+          withLocal "x" (CInt TInt 1) (evalExpr (Var TInt "x"))
+        inside @?= CInt TInt 1
+        M.lookup "x" (rtLocals rt1) @?= Just (Binding True (CInt TInt 5))
+
+    , testCase "removes the name if it did not exist before" $ do
+        (_, rt1) <- runEval (runtimeWithLocals []) $
+          withLocal "x" (CInt TInt 1) (return ())
+        M.member "x" (rtLocals rt1) @?= False
+
+    , testCase "keeps assignments to outer variables made inside the block" $ do
+        let rt0 = runtimeWithLocals [("total", Binding True (CInt TInt 0))]
+        (_, rt1) <- runEval rt0 $
+          withLocal "v" (CInt TInt 7) $ do
+            v <- evalExpr (Var TInt "v")
+            modify $ \rt -> rt {rtLocals = M.insert "total" (Binding True v) (rtLocals rt)}
+        M.lookup "total" (rtLocals rt1) @?= Just (Binding True (CInt TInt 7))
+        M.member "v" (rtLocals rt1) @?= False
+
+    , testCase "nested withLocal on the same name restores each level" $ do
+        (vals, rt1) <- runEval (runtimeWithLocals []) $
+          withLocal "x" (CInt TInt 1) $ do
+            a <- withLocal "x" (CInt TInt 2) (evalExpr (Var TInt "x"))
+            b <- evalExpr (Var TInt "x")
+            return (a, b)
+        vals @?= (CInt TInt 2, CInt TInt 1)
+        M.member "x" (rtLocals rt1) @?= False
+    ]
+
+  , testGroup "List literals"
+    [ testCase "evaluates each element" $ do
+        let tl = TList TInt
+        (v, _) <- runEval (runtimeWithLocals []) $
+          evalExpr (ListLit tl [Add TInt (CInt TInt 1) (CInt TInt 1), CInt TInt 3])
+        v @?= ListLit tl [CInt TInt 2, CInt TInt 3]
+
+    , testCase "empty list keeps its type" $ do
+        let tl = TList TBool
+        (v, _) <- runEval (runtimeWithLocals []) $ evalExpr (ListLit tl [])
+        v @?= ListLit tl []
+
+    , testCase "elements can read local variables" $ do
+        let tl = TList TInt
+            rt0 = runtimeWithLocals [("x", Binding False (CInt TInt 5))]
+        (v, _) <- runEval rt0 $
+          evalExpr (ListLit tl [Var TInt "x", Mul TInt (Var TInt "x") (CInt TInt 2)])
+        v @?= ListLit tl [CInt TInt 5, CInt TInt 10]
+
+    , testCase "nested lists are evaluated recursively" $ do
+        let inner = TList TInt
+            outer = TList inner
+        (v, _) <- runEval (runtimeWithLocals []) $
+          evalExpr (ListLit outer [ListLit inner [Sub TInt (CInt TInt 3) (CInt TInt 1)], ListLit inner []])
+        v @?= ListLit outer [ListLit inner [CInt TInt 2], ListLit inner []]
+
+    , testCase "an error in one element fails the whole list" $
+        case runStateT (evalExpr (ListLit (TList TInt) [CInt TInt 1, Div TInt (CInt TInt 1) (CInt TInt 0)])) (runtimeWithLocals []) of
+          Left err -> err @?= "Division by zero."
+          Right _  -> assertFailure "expected division by zero"
+    ]
+    , testGroup "List comprehensions"
+      [ testCase "single generator keeps the order" $ do
+          -- [x * 2 for x in [1, 2, 3]]
+          (v, _) <- runEval (runtimeWithLocals []) $
+            evalExpr (ListComp tInts (Mul TInt (Var TInt "x") (int 2)) [CompGen "x" (ints [1, 2, 3])])
+          v @?= ints [2, 4, 6]
+
+      , testCase "guard filters elements" $ do
+          -- [x for x in [1, 2, 3, 4] if x > 2]
+          (v, _) <- runEval (runtimeWithLocals []) $
+            evalExpr (ListComp tInts (Var TInt "x")
+              [CompGen "x" (ints [1, 2, 3, 4]), CompGuard (Gt TBool (Var TInt "x") (int 2))])
+          v @?= ints [3, 4]
+
+      , testCase "two generators give the cartesian product, first generator outermost" $ do
+          -- [x + y for x in [1, 2] for y in [10, 20]]
+          (v, _) <- runEval (runtimeWithLocals []) $
+            evalExpr (ListComp tInts (Add TInt (Var TInt "x") (Var TInt "y"))
+              [CompGen "x" (ints [1, 2]), CompGen "y" (ints [10, 20])])
+          v @?= ints [11, 21, 12, 22]
+
+      , testCase "a later generator can use an earlier name" $ do
+          -- [y for xs in [[1], [2, 3]] for y in xs]
+          let tNested = TList tInts
+          (v, _) <- runEval (runtimeWithLocals []) $
+            evalExpr (ListComp tInts (Var TInt "y")
+              [ CompGen "xs" (ListLit tNested [ints [1], ints [2, 3]])
+              , CompGen "y" (Var tInts "xs") ])
+          v @?= ints [1, 2, 3]
+
+      , testCase "empty source or a guard that never holds gives an empty list" $ do
+          (v1, _) <- runEval (runtimeWithLocals []) $
+            evalExpr (ListComp tInts (Var TInt "x") [CompGen "x" (ints [])])
+          v1 @?= ints []
+          (v2, _) <- runEval (runtimeWithLocals []) $
+            evalExpr (ListComp tInts (Var TInt "x") [CompGen "x" (ints [1, 2]), CompGuard (CBool TBool False)])
+          v2 @?= ints []
+
+      , testCase "generator names do not leak, outer values come back" $ do
+          let rt0 = runtimeWithLocals [("x", Binding True (int 5))]
+          (_, rt1) <- runEval rt0 $
+            evalExpr (ListComp tInts (Add TInt (Var TInt "x") (Var TInt "y"))
+              [CompGen "x" (ints [1, 2]), CompGen "y" (ints [10])])
+          M.lookup "x" (rtLocals rt1) @?= Just (Binding True (int 5))
+          M.member "y" (rtLocals rt1) @?= False
+      ]
+  
+  , testGroup "JSON"
+      [ testCase "a list is written as a JSON array" $
+          exprToJson (ints [1, 2, 3]) @?= toJSON [1, 2, 3 :: Int]
+
+      , testCase "a list of ints survives the round trip" $
+          jsonToExprByType tInts (exprToJson (ints [11, 21, 12, 22])) @?= Right (ints [11, 21, 12, 22])
+
+      , testCase "an empty array is read back with the declared type" $
+          jsonToExprByType (TList TBool) (toJSON ([] :: [Bool])) @?= Right (ListLit (TList TBool) [])
+
+      , testCase "nested lists survive the round trip" $ do
+          let v = ListLit (TList tInts) [ints [1], ints [], ints [2, 3]]
+          jsonToExprByType (TList tInts) (exprToJson v) @?= Right v
+
+      , testCase "a list of variants survives the round trip" $ do
+          let tv = TVariant [("Ok", TInt), ("Err", TUnit)]
+              v  = ListLit (TList tv) [VariantCons tv "Ok" (int 1), VariantCons tv "Err" (Unit TUnit)]
+          exprToJson v @?= toJSON [object ["Ok" .= (1 :: Int)], object ["Err" .= Null]]
+          jsonToExprByType (TList tv) (exprToJson v) @?= Right v
+
+      , testCase "a storage record with a list field survives the round trip" $ do
+          let ty = TRecord [("xs", tInts), ("n", TInt)]
+              v  = Record ty [("xs", ints [4, 5]), ("n", int 2)]
+          jsonToExprByType ty (exprToJson v) @?= Right v
+
+      , testCase "an element of the wrong type is rejected" $
+          assertBool "expected a decoding error" $
+            isLeft (jsonToExprByType tInts (toJSON [toJSON (1 :: Int), toJSON True]))
+
+      , testCase "a non-array is rejected for a list type" $
+          assertBool "expected a decoding error" $
+            isLeft (jsonToExprByType tInts (toJSON (1 :: Int)))
+      ]
+  
+  , testGroup "Lists sample (end to end)"
+      [ testCase "doubled right after originate" $ do
+          src <- readFile "samples/Lists.smartts"
+          fmap fst (runContract src listsInit [("doubled", object [])])
+            @?= Right (Just (ints [2, 4, 6, 8]))
+
+      , testCase "sums is the cartesian product with the argument list" $ do
+          src <- readFile "samples/Lists.smartts"
+          fmap fst (runContract src listsInit [("sums", object ["ys" .= [10, 20 :: Int]])])
+            @?= Right (Just (ints [11, 21, 12, 22, 13, 23, 14, 24]))
+
+      , testCase "keepAbove filters the storage, and the next call sees it" $ do
+          src <- readFile "samples/Lists.smartts"
+          case runContract src listsInit [("keepAbove", object ["min" .= (1 :: Int)]), ("doubled", object [])] of
+            Left err -> assertFailure err
+            Right (ret, storage) -> do
+              ret @?= Just (ints [4, 6, 8])
+              exprToJson storage @?= object ["xs" .= [2, 3, 4 :: Int], "grid" .= ([] :: [[Int]])]
+
+      , testCase "buildGrid stores a nested comprehension" $ do
+          src <- readFile "samples/Lists.smartts"
+          case runContract src listsInit [("buildGrid", object [])] of
+            Left err -> assertFailure err
+            Right (_, storage) ->
+              exprToJson storage @?= object ["xs" .= [1, 2, 3, 4 :: Int], "grid" .= [[1], [1, 2], [1, 2, 3], [1, 2, 3, 4 :: Int]]]
+      ]
+  ]
+
+listsInit :: Value
+listsInit = object ["start" .= [1, 2, 3, 4 :: Int]]
+
+tInts :: Type
+tInts = TList TInt
+
+int :: Int -> TypedExpr
+int = CInt TInt
+
+ints :: [Int] -> TypedExpr
+ints = ListLit tInts . map int
