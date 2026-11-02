@@ -11,6 +11,7 @@ translateType (A.TRecord fields) = L.TTuple (L.RowNode (map toLeaf fields))
   where
     toLeaf (name, ty) = L.RowLeaf (Just (L.Label name)) (translateType ty)
 translateType (A.TList t) = L.TList (translateType t)
+translateType (A.TVariant alts) = L.TOr (L.RowNode [L.RowLeaf (Just (L.Label n)) (translateType t) | (n, t) <- alts])
 
 -- Basic Expressions
 translateExpression :: A.TypedExpr -> L.Expr
