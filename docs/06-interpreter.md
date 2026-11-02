@@ -150,6 +150,34 @@ ordinary `execStmt`.
 
 ---
 
+## Lists
+
+A list value is a `ListLit` whose elements are all values.
+`evalExpr (ListLit ty es)` evaluates the elements from left to right with
+`mapM` and returns `ListLit ty values`. The annotation `ty` (for example
+`list<int>`) is kept, so an empty list still knows its element type.
+
+A comprehension evaluates to a list literal too. `evalExpr (ListComp ty body clauses)`
+walks the clauses from left to right with a recursive helper `go`:
+
+```haskell
+go []                       -- no clauses left: evaluate the body once → [v]
+go (CompGen x src : rest)   -- for each item of src: withLocal x item (go rest), then concat
+go (CompGuard g : rest)     -- g is true: go rest; g is false: []
+```
+
+The first generator is the outermost loop, so
+`[x + y for x in [1, 2] for y in [10, 20]]` gives `[11, 21, 12, 22]`. A
+generator's source is evaluated each time `go` reaches it, inside the
+`withLocal` of the generators before it, so a later generator can iterate over
+a name bound by an earlier one: `[y for xs in xss for y in xs]`. When the
+comprehension ends, every generator name is gone and any shadowed value is back.
+
+`samples/Lists.smartts` stores lists, filters them and builds a nested list,
+and runs with `--originate` and `--call`.
+
+---
+
 ## Private Method Calls
 
 `Call name args` is an expression that invokes a `@private` method. The
@@ -258,6 +286,7 @@ deserialised when loading it.
 | `Record fields` | object |
 | `Unit` | null |
 | `VariantCons tag payload` | object with one key, the tag: `{"Ok": 42}`, `{"Err": null}` |
+| `ListLit items` | array: `[1, 2, 3]` |
 
 ### `JSON → Expr` (`jsonToExprByType`)
 
@@ -271,6 +300,11 @@ A `TVariant` type expects an object with exactly one key, which must be one of
 its tags. The payload is decoded against that tag's type, and `null` is the
 value of type `unit`. The same decoder reads `--args`, so a variant argument is
 passed as `{"s": {"Rect": {"w": 2, "h": 3}}}`.
+
+A `TList t` type expects a JSON array, and decodes each element against `t`.
+Because the type comes from the declaration, `[]` is read back with the right
+element type. One element of the wrong type makes the whole list fail. Lists
+are passed in `--args` the same way: `{"start": [1, 2, 3, 4]}`.
 
 ---
 
