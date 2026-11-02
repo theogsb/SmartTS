@@ -80,7 +80,8 @@ evalExpr (Call _ name args) = do
   case mRet of
     Nothing -> interpretBug ("method `" ++ name ++ "` did not return a value after type check")
     Just v  -> return v
-evalExpr (ListLit _ _) = interpretBug "list literal reached the interpreter"
+-- Lists
+evalExpr (ListLit ty es) = ListLit ty <$> mapM evalExpr es
 evalExpr (ListComp _ _ _) = interpretBug "list comprehension reached the interpreter"
 -- Variants
 evalExpr (VariantCons ty tag e) = VariantCons ty tag <$> evalExpr e

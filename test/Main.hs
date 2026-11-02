@@ -20,6 +20,8 @@ import SmartTS.Interpreter
   , originateWithJsonArgs
   )
 import SmartTS.TypeCheck (typeCheckContract)
+import Control.Monad.State (runStateT, modify)
+import SmartTS.Interpreter (Runtime (..), Binding (..), EvalM, evalExpr, withLocal)
 
 main :: IO ()
 main = defaultMain tests
@@ -49,6 +51,7 @@ tests =
     , comprehensionTests
     , typedAstTests
     , interpreterTests
+    , listInterpreterTests
     ]
 
 -- Helper function to parse and assert success
@@ -1385,4 +1388,89 @@ variantTypeTests = testGroup "Type checker: variant types"
           typeCheckSuccess $
             withMethod "x: { a: { a: int } }" "unit" "return ();"
       ]
+  ]
+
+runtimeWithLocals :: [(Name, Binding)] -> Runtime
+runtimeWithLocals ls = Runtime
+  { rtStorage = Nothing
+  , rtParams  = M.empty
+  , rtLocals  = M.fromList ls
+  , rtMethods = M.empty
+  }
+
+runEval :: Runtime -> EvalM a -> IO (a, Runtime)
+runEval rt action = case runStateT action rt of
+  Left err -> assertFailure ("evaluation failed: " ++ err) >> error "unreachable"
+  Right r  -> return r
+
+listInterpreterTests :: TestTree
+listInterpreterTests = testGroup "Interpreter: lists"
+  [ testGroup "withLocal"
+    [ testCase "binds the name inside the block" $ do
+        (v, _) <- runEval (runtimeWithLocals []) $
+          withLocal "x" (CInt TInt 1) (evalExpr (Var TInt "x"))
+        v @?= CInt TInt 1
+
+    , testCase "restores the previous value after the block (shadowing)" $ do
+        let rt0 = runtimeWithLocals [("x", Binding True (CInt TInt 5))]
+        (inside, rt1) <- runEval rt0 $
+          withLocal "x" (CInt TInt 1) (evalExpr (Var TInt "x"))
+        inside @?= CInt TInt 1
+        M.lookup "x" (rtLocals rt1) @?= Just (Binding True (CInt TInt 5))
+
+    , testCase "removes the name if it did not exist before" $ do
+        (_, rt1) <- runEval (runtimeWithLocals []) $
+          withLocal "x" (CInt TInt 1) (return ())
+        M.member "x" (rtLocals rt1) @?= False
+
+    , testCase "keeps assignments to outer variables made inside the block" $ do
+        let rt0 = runtimeWithLocals [("total", Binding True (CInt TInt 0))]
+        (_, rt1) <- runEval rt0 $
+          withLocal "v" (CInt TInt 7) $ do
+            v <- evalExpr (Var TInt "v")
+            modify $ \rt -> rt {rtLocals = M.insert "total" (Binding True v) (rtLocals rt)}
+        M.lookup "total" (rtLocals rt1) @?= Just (Binding True (CInt TInt 7))
+        M.member "v" (rtLocals rt1) @?= False
+
+    , testCase "nested withLocal on the same name restores each level" $ do
+        (vals, rt1) <- runEval (runtimeWithLocals []) $
+          withLocal "x" (CInt TInt 1) $ do
+            a <- withLocal "x" (CInt TInt 2) (evalExpr (Var TInt "x"))
+            b <- evalExpr (Var TInt "x")
+            return (a, b)
+        vals @?= (CInt TInt 2, CInt TInt 1)
+        M.member "x" (rtLocals rt1) @?= False
+    ]
+
+  , testGroup "List literals"
+    [ testCase "evaluates each element" $ do
+        let tl = TList TInt
+        (v, _) <- runEval (runtimeWithLocals []) $
+          evalExpr (ListLit tl [Add TInt (CInt TInt 1) (CInt TInt 1), CInt TInt 3])
+        v @?= ListLit tl [CInt TInt 2, CInt TInt 3]
+
+    , testCase "empty list keeps its type" $ do
+        let tl = TList TBool
+        (v, _) <- runEval (runtimeWithLocals []) $ evalExpr (ListLit tl [])
+        v @?= ListLit tl []
+
+    , testCase "elements can read local variables" $ do
+        let tl = TList TInt
+            rt0 = runtimeWithLocals [("x", Binding False (CInt TInt 5))]
+        (v, _) <- runEval rt0 $
+          evalExpr (ListLit tl [Var TInt "x", Mul TInt (Var TInt "x") (CInt TInt 2)])
+        v @?= ListLit tl [CInt TInt 5, CInt TInt 10]
+
+    , testCase "nested lists are evaluated recursively" $ do
+        let inner = TList TInt
+            outer = TList inner
+        (v, _) <- runEval (runtimeWithLocals []) $
+          evalExpr (ListLit outer [ListLit inner [Sub TInt (CInt TInt 3) (CInt TInt 1)], ListLit inner []])
+        v @?= ListLit outer [ListLit inner [CInt TInt 2], ListLit inner []]
+
+    , testCase "an error in one element fails the whole list" $
+        case runStateT (evalExpr (ListLit (TList TInt) [CInt TInt 1, Div TInt (CInt TInt 1) (CInt TInt 0)])) (runtimeWithLocals []) of
+          Left err -> err @?= "Division by zero."
+          Right _  -> assertFailure "expected division by zero"
+    ]
   ]
