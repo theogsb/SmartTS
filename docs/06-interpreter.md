@@ -103,6 +103,7 @@ are accumulated in the `EvalM` state.
 | `AssignmentStmt lv e` | Evaluate `e`; navigate `lv` and write the value. |
 | `IfStmt cond thn mel` | Evaluate `cond`; execute the matching branch. |
 | `WhileStmt cond body` | Loop: evaluate `cond`, execute `body` until cond is false or return. |
+| `MatchStmt e cases` | Evaluate `e` to a variant; execute the first case with its tag, or `_`. See [Variants](#variants). |
 
 ### How `return` propagates
 
@@ -119,6 +120,33 @@ execSequence (s:ss) = do
 ```
 
 A `while` loop does the same inside its iteration loop.
+
+---
+
+## Variants
+
+A variant value is the node itself: `evalExpr (VariantCons ty tag e)` evaluates
+the payload and returns `VariantCons ty tag v`. Its annotation `ty` is the whole
+variant type, set by the type checker, so `==` can compare two variant values
+directly.
+
+`match` evaluates the scrutinee and walks the cases from top to bottom. The
+first case whose tag is the value's tag (or `_`) runs. The type checker already
+guarantees that some case applies. If the case binds a name, as in `Ok(n)`, the
+body runs inside `withLocal`:
+
+```haskell
+withLocal :: Name -> TypedExpr -> EvalM a -> EvalM a
+```
+
+It binds the name as an immutable local, runs the body, and then gives that
+name back the value it had before (or removes it). Only that name is restored,
+so assignments the body makes to other variables and to storage are kept. A
+`return` inside a case propagates like any other, because the body is an
+ordinary `execStmt`.
+
+`samples/Variants.smartts` uses all of this and runs with `--originate` and
+`--call`.
 
 ---
 
@@ -229,6 +257,7 @@ deserialised when loading it.
 | `CBool b` | boolean |
 | `Record fields` | object |
 | `Unit` | null |
+| `VariantCons tag payload` | object with one key, the tag: `{"Ok": 42}`, `{"Err": null}` |
 
 ### `JSON → Expr` (`jsonToExprByType`)
 
@@ -237,6 +266,11 @@ decoding. A `TRecord` type causes the decoder to expect a JSON object with
 matching field names; each field value is decoded recursively against its
 declared type. This ensures that persisted storage is always structurally
 valid before the interpreter touches it.
+
+A `TVariant` type expects an object with exactly one key, which must be one of
+its tags. The payload is decoded against that tag's type, and `null` is the
+value of type `unit`. The same decoder reads `--args`, so a variant argument is
+passed as `{"s": {"Rect": {"w": 2, "h": 3}}}`.
 
 ---
 
