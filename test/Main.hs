@@ -709,6 +709,21 @@ interpreterTests = testGroup "Interpreter"
           ret @?= Just (CInt TInt 0)
           exprToJson storage @?= object ["out" .= (0 :: Int)]
 
+  , testCase "Variants sample: setCircle then computeArea" $ do
+      src <- readFile "samples/Variants.smartts"
+      fmap fst (runContract src (object []) [("setCircle", object ["r" .= (2 :: Int)]), ("computeArea", object [])])
+        @?= Right (Just (CInt TInt 12))
+
+  , testCase "Variants sample: a variant argument from JSON, then computeArea" $ do
+      src <- readFile "samples/Variants.smartts"
+      let rect = object ["Rect" .= object ["w" .= (2 :: Int), "h" .= (3 :: Int)]]
+      fmap fst (runContract src (object []) [("setShape", object ["s" .= rect]), ("computeArea", object [])])
+        @?= Right (Just (CInt TInt 6))
+
+  , testCase "Variants sample: isEmpty right after originate" $ do
+      src <- readFile "samples/Variants.smartts"
+      fmap fst (runContract src (object []) [("isEmpty", object [])]) @?= Right (Just (CBool TBool True))
+
   , testCase "JSON: variant values go to JSON and back" $ do
       let t = TVariant [("Ok", TInt), ("Err", TUnit)]
           ok = VariantCons t "Ok" (CInt TInt 42)

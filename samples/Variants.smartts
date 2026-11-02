@@ -1,0 +1,44 @@
+contract Shapes {
+  storage: {
+    last: variant { Circle(int) | Rect({ w: int, h: int }) | Empty },
+    area: int
+  };
+
+  @originate
+  init(): unit {
+    storage.last = #Empty;
+    storage.area = 0;
+    return ();
+  }
+
+  @entrypoint
+  setCircle(r: int): unit {
+    storage.last = #Circle(r);
+    return ();
+  }
+
+  @entrypoint
+  setShape(s: variant { Circle(int) | Rect({ w: int, h: int }) | Empty }): unit {
+    storage.last = s;
+    return ();
+  }
+
+  @entrypoint
+  computeArea(): int {
+    match (storage.last) {
+      Circle(r) => { storage.area = 3 * r * r; }
+      Rect(d)   => { storage.area = d.w * d.h; }
+      Empty     => { storage.area = 0; }
+    }
+    return storage.area;
+  }
+
+  @entrypoint
+  isEmpty(): bool {
+    match (storage.last) {
+      Empty => { return true; }
+      _     => { return false; }
+    }
+    return false;
+  }
+}
