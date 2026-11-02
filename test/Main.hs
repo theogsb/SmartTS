@@ -1473,4 +1473,59 @@ listInterpreterTests = testGroup "Interpreter: lists"
           Left err -> err @?= "Division by zero."
           Right _  -> assertFailure "expected division by zero"
     ]
+    , testGroup "List comprehensions"
+      [ testCase "single generator keeps the order" $ do
+          -- [x * 2 for x in [1, 2, 3]]
+          (v, _) <- runEval (runtimeWithLocals []) $
+            evalExpr (ListComp tInts (Mul TInt (Var TInt "x") (int 2)) [CompGen "x" (ints [1, 2, 3])])
+          v @?= ints [2, 4, 6]
+
+      , testCase "guard filters elements" $ do
+          -- [x for x in [1, 2, 3, 4] if x > 2]
+          (v, _) <- runEval (runtimeWithLocals []) $
+            evalExpr (ListComp tInts (Var TInt "x")
+              [CompGen "x" (ints [1, 2, 3, 4]), CompGuard (Gt TBool (Var TInt "x") (int 2))])
+          v @?= ints [3, 4]
+
+      , testCase "two generators give the cartesian product, first generator outermost" $ do
+          -- [x + y for x in [1, 2] for y in [10, 20]]
+          (v, _) <- runEval (runtimeWithLocals []) $
+            evalExpr (ListComp tInts (Add TInt (Var TInt "x") (Var TInt "y"))
+              [CompGen "x" (ints [1, 2]), CompGen "y" (ints [10, 20])])
+          v @?= ints [11, 21, 12, 22]
+
+      , testCase "a later generator can use an earlier name" $ do
+          -- [y for xs in [[1], [2, 3]] for y in xs]
+          let tNested = TList tInts
+          (v, _) <- runEval (runtimeWithLocals []) $
+            evalExpr (ListComp tInts (Var TInt "y")
+              [ CompGen "xs" (ListLit tNested [ints [1], ints [2, 3]])
+              , CompGen "y" (Var tInts "xs") ])
+          v @?= ints [1, 2, 3]
+
+      , testCase "empty source or a guard that never holds gives an empty list" $ do
+          (v1, _) <- runEval (runtimeWithLocals []) $
+            evalExpr (ListComp tInts (Var TInt "x") [CompGen "x" (ints [])])
+          v1 @?= ints []
+          (v2, _) <- runEval (runtimeWithLocals []) $
+            evalExpr (ListComp tInts (Var TInt "x") [CompGen "x" (ints [1, 2]), CompGuard (CBool TBool False)])
+          v2 @?= ints []
+
+      , testCase "generator names do not leak, outer values come back" $ do
+          let rt0 = runtimeWithLocals [("x", Binding True (int 5))]
+          (_, rt1) <- runEval rt0 $
+            evalExpr (ListComp tInts (Add TInt (Var TInt "x") (Var TInt "y"))
+              [CompGen "x" (ints [1, 2]), CompGen "y" (ints [10])])
+          M.lookup "x" (rtLocals rt1) @?= Just (Binding True (int 5))
+          M.member "y" (rtLocals rt1) @?= False
+      ]
   ]
+
+tInts :: Type
+tInts = TList TInt
+
+int :: Int -> TypedExpr
+int = CInt TInt
+
+ints :: [Int] -> TypedExpr
+ints = ListLit tInts . map int
