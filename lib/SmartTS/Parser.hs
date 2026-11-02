@@ -246,7 +246,7 @@ parsePattern :: Parser Pattern
 parsePattern = wildcard <|> tagged
   where
     wildcard = PWildcard <$ lexeme (try (char '_' <* notFollowedBy (alphaNumChar <|> char '_')))
-    tagged = PTag <$> parseName <*> optional (parens parseName)
+    tagged = PTag <$> parseName <*> (Nothing <$ parseUnit <|> optional (parens parseName))
 
 parseVarDeclStmt :: Parser ParsedStmt
 parseVarDeclStmt = do

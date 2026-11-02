@@ -27,6 +27,7 @@ tests =
         , statementTests
         , errorTests
         , listTests
+        , variantParsingTests
         ]
     , typeCheckTests
     , expectedTypeTests
@@ -609,6 +610,53 @@ listTests = testGroup "List Parsing"
         case contract of
           Contract _ _ [MethodDecl _ _ _ _ (SequenceStmt [ValDeclStmt "index" _ _, ValDeclStmt "format" _ _, _])] -> return ()
           _ -> assertFailure "Expected two val declarations named index and format"
+  ]
+
+variantParsingTests :: TestTree
+variantParsingTests = testGroup "Variant Parsing"
+  [ testCase "Variant type: tags with and without payload" $
+      parseSuccess (withMethod "v: variant { A(int) | B }" "unit" "return ();") $ \contract ->
+        case contract of
+          Contract _ _ [MethodDecl _ _ [FormalParameter "v" (TVariant [("A", TInt), ("B", TUnit)])] _ _] -> return ()
+          _ -> assertFailure "Expected parameter v of type TVariant [(A, TInt), (B, TUnit)]"
+
+  , testCase "Variant type: no tags is rejected" $
+      parseFailure (withMethod "v: variant { }" "unit" "return ();")
+
+  , testCase "Constructor: payload expression" $
+      parseSuccess (withMethod "" "unit" "return #A(1 + 2);") $ \contract ->
+        case contract of
+          Contract _ _ [MethodDecl _ _ _ _ (SequenceStmt [ReturnStmt (VariantCons _ "A" (Add _ (CInt _ 1) (CInt _ 2)))])] -> return ()
+          _ -> assertFailure "Expected VariantCons A with an Add payload"
+
+  , testCase "Constructor: #B and #B() carry a Unit payload" $
+      mapM_
+        (\src -> parseSuccess (withMethod "" "unit" src) $ \contract ->
+          case contract of
+            Contract _ _ [MethodDecl _ _ _ _ (SequenceStmt [ReturnStmt (VariantCons _ "B" (Unit _))])] -> return ()
+            _ -> assertFailure $ "Expected VariantCons B with a Unit payload for " ++ src)
+        ["return #B;", "return #B();"]
+
+  , testCase "Match: tag with binder and tag without binder" $
+      parseSuccess (withMethod "v: variant { A(int) | B }" "int" "match (v) { A(n) => { return n; } B => { return 0; } }") $ \contract ->
+        case contract of
+          Contract _ _ [MethodDecl _ _ _ _ (SequenceStmt [MatchStmt (Var _ "v") [MatchCase (PTag "A" (Just "n")) _, MatchCase (PTag "B" Nothing) _]])] -> return ()
+          _ -> assertFailure "Expected cases A(n) and B"
+
+  , testCase "Match: `_` is the wildcard, `_x` is a tag" $
+      parseSuccess (withMethod "v: variant { A | B }" "int" "match (v) { _x => { return 1; } _ => { return 0; } }") $ \contract ->
+        case contract of
+          Contract _ _ [MethodDecl _ _ _ _ (SequenceStmt [MatchStmt _ [MatchCase (PTag "_x" Nothing) _, MatchCase PWildcard _]])] -> return ()
+          _ -> assertFailure "Expected a tag _x followed by the wildcard"
+
+  , testCase "Match: Err() is the same pattern as Err" $
+      parseSuccess (withMethod "v: variant { Err }" "int" "match (v) { Err() => { return 0; } }") $ \contract ->
+        case contract of
+          Contract _ _ [MethodDecl _ _ _ _ (SequenceStmt [MatchStmt _ [MatchCase (PTag "Err" Nothing) _]])] -> return ()
+          _ -> assertFailure "Expected pattern Err without binder"
+
+  , testCase "Match: a literal in the pattern is rejected" $
+      parseFailure (withMethod "v: variant { A(int) }" "int" "match (v) { A(1) => { return 1; } }")
   ]
 
 -- Contract whose storage holds a list, with an entrypoint f running @body@.
