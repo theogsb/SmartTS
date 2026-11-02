@@ -299,8 +299,9 @@ A comprehension is `[element clause clause …]`. The first clause must be a
 generator (`for name in expression`); later clauses may be generators or
 guards (`if expression`) in any order. `for` and `in` are reserved words.
 
-The type checker accepts lists and comprehensions, as described in [05-type-checker.md](05-type-checker.md).
-Evaluating them is not supported yet.
+The type checker accepts lists and comprehensions, as described in [05-type-checker.md](05-type-checker.md),
+and the interpreter evaluates them, as described in [06-interpreter.md](06-interpreter.md#lists).
+`samples/Lists.smartts` is a complete example.
 
 ### Variants
 
