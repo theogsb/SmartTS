@@ -82,6 +82,8 @@ evalExpr (Call _ name args) = do
     Just v  -> return v
 evalExpr (ListLit _ _) = interpretBug "list literal reached the interpreter"
 evalExpr (ListComp _ _ _) = interpretBug "list comprehension reached the interpreter"
+-- Variants
+evalExpr (VariantCons ty tag e) = VariantCons ty tag <$> evalExpr e
 
 -- ---------------------------------------------------------------------------
 -- Statement execution
@@ -123,6 +125,31 @@ execStmt (WhileStmt cond body) = loop
             Just v  -> return (Just v)
             Nothing -> loop
         _ -> interpretBug "while condition was not bool after type check"
+-- Variants
+execStmt (MatchStmt scrutinee cases) = do
+  v <- evalExpr scrutinee
+  case v of
+    VariantCons _ tag payload -> runCase tag payload cases
+    _ -> interpretBug "match scrutinee was not a variant after type check"
+  where
+    runCase _ _ [] = interpretBug "no match case applied after type check"
+    runCase tag payload (MatchCase pat body : rest) =
+      case pat of
+        PWildcard -> execStmt body
+        PTag t binder
+          | t /= tag -> runCase tag payload rest
+          | Just x <- binder -> withLocal x payload (execStmt body)
+          | otherwise -> execStmt body
+
+-- | Bind @n@ as an immutable local while running @action@, then give @n@ back the
+-- value it had before. Only @n@ is restored, so assignments to other names survive.
+withLocal :: Name -> TypedExpr -> EvalM a -> EvalM a
+withLocal n v action = do
+  old <- gets (M.lookup n . rtLocals)
+  modify $ \rt -> rt {rtLocals = M.insert n (Binding False v) (rtLocals rt)}
+  r <- action
+  modify $ \rt -> rt {rtLocals = M.alter (const old) n (rtLocals rt)}
+  return r
 
 execSequence :: [TypedStmt] -> EvalM (Maybe TypedExpr)
 execSequence [] = return Nothing

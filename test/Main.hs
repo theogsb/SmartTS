@@ -6,9 +6,19 @@ import Test.Tasty
 import Test.Tasty.HUnit
 import SmartTS.IR.AST
 import SmartTS.Parser
-import Data.Aeson (object, (.=))
+import Control.Monad (foldM)
+import Data.Aeson (Value (..), object, (.=))
+import Data.Either (isLeft)
 import Data.List (isInfixOf)
-import SmartTS.Interpreter (ContractInstance (..), contractInstanceFromStorageValue)
+import qualified Data.Map.Strict as M
+import SmartTS.Interpreter
+  ( ContractInstance (..)
+  , callEntrypointWithJsonArgs
+  , contractInstanceFromStorageValue
+  , exprToJson
+  , jsonToExprByType
+  , originateWithJsonArgs
+  )
 import SmartTS.TypeCheck (typeCheckContract)
 
 main :: IO ()
@@ -38,6 +48,7 @@ tests =
     , listLiteralTests
     , comprehensionTests
     , typedAstTests
+    , interpreterTests
     ]
 
 -- Helper function to parse and assert success
@@ -657,6 +668,59 @@ variantParsingTests = testGroup "Variant Parsing"
 
   , testCase "Match: a literal in the pattern is rejected" $
       parseFailure (withMethod "v: variant { A(int) }" "int" "match (v) { A(1) => { return 1; } }")
+  ]
+
+-- Parse, type-check and originate @src@ with @initArgs@, then call each entrypoint in order.
+-- Returns the value returned by the last call and the final storage.
+runContract :: String -> Value -> [(String, Value)] -> Either String (Maybe TypedExpr, TypedExpr)
+runContract src initArgs calls = do
+  c <- either (Left . show) typeCheckContract (parseContractFromString src)
+  (addr, repo0) <- originateWithJsonArgs M.empty c src initArgs
+  (ret, repo) <- foldM (\(_, r) (ep, args) -> callEntrypointWithJsonArgs r c addr ep src args) (Nothing, repo0) calls
+  maybe (Left "contract instance not found") (\ci -> Right (ret, instanceStorage ci)) (M.lookup addr repo)
+
+-- f binds the payload of Ok to n, the same name as its parameter.
+matchContract :: String
+matchContract =
+  "contract M { storage: { out: int }; "
+    ++ "@originate init(): unit { storage.out = 0; return (); } "
+    ++ "@entrypoint f(n: int, r: variant { Ok(int) | Err }): int { "
+    ++ "match (r) { Ok(n) => { storage.out = n; } _ => { return 0; } } return n; } }"
+
+interpreterTests :: TestTree
+interpreterTests = testGroup "Interpreter"
+  [ testCase "Counter: originate and increment update the storage" $ do
+      src <- readFile "samples/Counter.smartts"
+      case runContract src (object ["initialCount" .= (10 :: Int)]) [("increment", object ["by" .= (5 :: Int)])] of
+        Left err -> assertFailure err
+        Right (_, storage) -> exprToJson storage @?= object ["count" .= (15 :: Int), "enabled" .= True]
+
+  , testCase "Match: binds the payload, then restores the shadowed parameter" $
+      case runContract matchContract (object []) [("f", object ["n" .= (1 :: Int), "r" .= object ["Ok" .= (41 :: Int)]])] of
+        Left err -> assertFailure err
+        Right (ret, storage) -> do
+          ret @?= Just (CInt TInt 1)
+          exprToJson storage @?= object ["out" .= (41 :: Int)]
+
+  , testCase "Match: wildcard case, and return inside a case leaves the method" $
+      case runContract matchContract (object []) [("f", object ["n" .= (1 :: Int), "r" .= object ["Err" .= Null]])] of
+        Left err -> assertFailure err
+        Right (ret, storage) -> do
+          ret @?= Just (CInt TInt 0)
+          exprToJson storage @?= object ["out" .= (0 :: Int)]
+
+  , testCase "JSON: variant values go to JSON and back" $ do
+      let t = TVariant [("Ok", TInt), ("Err", TUnit)]
+          ok = VariantCons t "Ok" (CInt TInt 42)
+          bad = VariantCons t "Err" (Unit TUnit)
+      exprToJson ok @?= object ["Ok" .= (42 :: Int)]
+      exprToJson bad @?= object ["Err" .= Null]
+      jsonToExprByType t (exprToJson ok) @?= Right ok
+      jsonToExprByType t (exprToJson bad) @?= Right bad
+
+  , testCase "JSON: an unknown tag is rejected" $
+      assertBool "expected a decoding error" $
+        isLeft (jsonToExprByType (TVariant [("Ok", TInt)]) (object ["Nope" .= (1 :: Int)]))
   ]
 
 -- Contract whose storage holds a list, with an entrypoint f running @body@.

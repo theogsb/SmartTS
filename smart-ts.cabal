@@ -154,6 +154,7 @@ test-suite smart-ts-test
     build-depends:
         base >=4.17.0.0,
         aeson >=2.0,
+        containers >=0.6,
         smart-ts,
         tasty >=1.4,
         tasty-hunit >=0.10
