@@ -1553,7 +1553,37 @@ listInterpreterTests = testGroup "Interpreter: lists"
           assertBool "expected a decoding error" $
             isLeft (jsonToExprByType tInts (toJSON (1 :: Int)))
       ]
+  
+  , testGroup "Lists sample (end to end)"
+      [ testCase "doubled right after originate" $ do
+          src <- readFile "samples/Lists.smartts"
+          fmap fst (runContract src listsInit [("doubled", object [])])
+            @?= Right (Just (ints [2, 4, 6, 8]))
+
+      , testCase "sums is the cartesian product with the argument list" $ do
+          src <- readFile "samples/Lists.smartts"
+          fmap fst (runContract src listsInit [("sums", object ["ys" .= [10, 20 :: Int]])])
+            @?= Right (Just (ints [11, 21, 12, 22, 13, 23, 14, 24]))
+
+      , testCase "keepAbove filters the storage, and the next call sees it" $ do
+          src <- readFile "samples/Lists.smartts"
+          case runContract src listsInit [("keepAbove", object ["min" .= (1 :: Int)]), ("doubled", object [])] of
+            Left err -> assertFailure err
+            Right (ret, storage) -> do
+              ret @?= Just (ints [4, 6, 8])
+              exprToJson storage @?= object ["xs" .= [2, 3, 4 :: Int], "grid" .= ([] :: [[Int]])]
+
+      , testCase "buildGrid stores a nested comprehension" $ do
+          src <- readFile "samples/Lists.smartts"
+          case runContract src listsInit [("buildGrid", object [])] of
+            Left err -> assertFailure err
+            Right (_, storage) ->
+              exprToJson storage @?= object ["xs" .= [1, 2, 3, 4 :: Int], "grid" .= [[1], [1, 2], [1, 2, 3], [1, 2, 3, 4 :: Int]]]
+      ]
   ]
+
+listsInit :: Value
+listsInit = object ["start" .= [1, 2, 3, 4 :: Int]]
 
 tInts :: Type
 tInts = TList TInt
