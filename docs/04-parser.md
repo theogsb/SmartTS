@@ -177,7 +177,7 @@ or method names. After reading a name, it checks against `reservedWords`:
 reservedWords =
   [ "contract", "storage", "int", "bool", "unit", "list"
   , "return", "if", "else", "while", "var", "val"
-  , "true", "false", "for", "in"
+  , "true", "false", "for", "in", "variant", "match"
   ]
 ```
 
@@ -234,6 +234,34 @@ inside them do, so patterns look like `CompGen "x" (Var _ "xs")`.
 
 The type checker accepts lists and comprehensions, as described in [05-type-checker.md](05-type-checker.md).
 The interpreter does not support them yet, and reports an error for `ListLit` and `ListComp`.
+
+---
+
+## Variants
+
+Each variant form starts with its own token (`variant`, `#` or `match`), so the
+parser picks the rule without backtracking:
+
+```
+type        ::= … | variantType
+variantType ::= "variant" "{" variantAlt ("|" variantAlt)* "}"
+variantAlt  ::= IDENT ( "(" type ")" )?
+atom        ::= … | variantCons
+variantCons ::= "#" IDENT ( "()" | "(" expr ")" )?
+stmt        ::= … | matchStmt
+matchStmt   ::= "match" "(" expr ")" "{" matchCase* "}"
+matchCase   ::= pattern "=>" stmt
+pattern     ::= "_" | IDENT ( "()" | "(" IDENT ")" )?
+```
+
+A tag without parentheses has payload `unit`: `variant { A | B }` has type
+`TVariant [("A", TUnit), ("B", TUnit)]`, and `#B` and `#B()` both build
+`VariantCons () "B" (Unit ())`. The pattern accepts `Err()` for the same
+reason, so it gives `PTag "Err" Nothing`, like `Err`. In both places `()` is
+tried before `"(" … ")"`, because `symbol "()"` consumes nothing when it fails.
+
+The parser does not check meaning: an unknown tag or a missing case parses, and
+the type checker rejects it.
 
 ---
 

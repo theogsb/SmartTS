@@ -8,7 +8,7 @@ knowledge of the implementation is needed here.
 
 ## Types
 
-SmartTS has four types:
+SmartTS has these types:
 
 | Type | Description | Example values |
 |------|-------------|----------------|
@@ -16,6 +16,7 @@ SmartTS has four types:
 | `bool` | Boolean | `true`, `false` |
 | `unit` | No value; used as a return type for side-effect-only methods | `()` |
 | `{ f1: T1, f2: T2, … }` | Record — a named collection of fields | `{ count: 1, enabled: true }` |
+| `variant { A(T) \| B }` | Variant — exactly one of several tagged alternatives | `#A(1)`, `#B` |
 
 Records can be nested: `{ pos: { x: int, y: int }, active: bool }` is a
 record whose `pos` field is itself a record.
@@ -300,6 +301,20 @@ guards (`if expression`) in any order. `for` and `in` are reserved words.
 
 The type checker accepts lists and comprehensions, as described in [05-type-checker.md](05-type-checker.md).
 Evaluating them is not supported yet.
+
+### Variants
+
+```typescript
+variant { Circle(int) | Empty }      // type: one tag or the other
+#Circle(5)                           // build a value; #Empty and #Empty() have no payload
+match (s) {                          // consume a value (a statement)
+  Circle(r) => { return r; }         // r is bound to the payload
+  _ => { return 0; }                 // wildcard: any other tag
+}
+```
+
+A tag without parentheses has payload `unit`. `match` must cover every tag or
+end with `_`, as described in [05-type-checker.md](05-type-checker.md).
 
 ---
 
