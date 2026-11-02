@@ -298,8 +298,8 @@ A comprehension is `[element clause clause …]`. The first clause must be a
 generator (`for name in expression`); later clauses may be generators or
 guards (`if expression`) in any order. `for` and `in` are reserved words.
 
-Only parsing is supported for now; type checking and evaluation of lists come
-in a later milestone.
+The type checker accepts lists and comprehensions, as described in [05-type-checker.md](05-type-checker.md).
+Evaluating them is not supported yet.
 
 ---
 

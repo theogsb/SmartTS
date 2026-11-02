@@ -232,8 +232,8 @@ may appear in any order.
 Neither `CompGen` nor `CompGuard` carries an annotation. Only the expressions
 inside them do, so patterns look like `CompGen "x" (Var _ "xs")`.
 
-The type checker and interpreter do not support lists yet; they report an error
-for `ListLit` and `ListComp`.
+The type checker accepts lists and comprehensions, as described in [05-type-checker.md](05-type-checker.md).
+The interpreter does not support them yet, and reports an error for `ListLit` and `ListComp`.
 
 ---
 
