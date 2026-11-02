@@ -18,6 +18,8 @@ exprToJson (Record _ fields) =
       | (k, v) <- fields
       ]
 exprToJson (Unit _) = Null
+-- Variants
+exprToJson (VariantCons _ tag payload) = Object (KM.singleton (fromStringKey tag) (exprToJson payload))
 exprToJson _ = Null
 
 jsonToExprByType :: Type -> Value -> Either String TypedExpr
@@ -26,6 +28,7 @@ jsonToExprByType TInt (Number n) =
     Right i -> Right (CInt TInt i)
     Left _  -> Left "Expected integer number for int type."
 jsonToExprByType TBool (Bool b) = Right (CBool TBool b)
+jsonToExprByType TUnit Null = Right (Unit TUnit)
 jsonToExprByType (TRecord fieldsT) (Object obj) = do
   pairs <- mapM (decodeField obj) fieldsT
   Right (Record (TRecord fieldsT) pairs)
@@ -36,6 +39,12 @@ jsonToExprByType (TRecord fieldsT) (Object obj) = do
         Just v  -> do
           ev <- jsonToExprByType ftype v
           Right (fname, ev)
+-- Variants: {"Tag": payload}, annotated with the whole variant type, as the type checker does.
+jsonToExprByType t@(TVariant alts) (Object obj) =
+  case KM.toList obj of
+    [(k, v)] | Just payloadT <- lookup (toStringKey k) alts ->
+      VariantCons t (toStringKey k) <$> jsonToExprByType payloadT v
+    _ -> Left "Expected a JSON object with exactly one tag of the variant."
 jsonToExprByType _ _ = Left "JSON value does not match the expected SmartTS type."
 
 jsonToExprUntyped :: Value -> Either String ParsedExpr
